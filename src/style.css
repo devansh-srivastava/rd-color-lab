@@ -619,3 +619,224 @@ button:focus-visible {
     scroll-behavior: auto !important;
   }
 }
+
+.entry-shell {
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at 50% 40%, #302a32, #171820 55%, #101118);
+}
+.entry-card {
+  width: min(100%, 430px);
+  padding: 34px;
+  border: 1px solid #ffffff2d;
+  border-radius: 24px;
+  background: #20212a;
+  box-shadow: 0 24px 70px #0005;
+}
+.entry-card .brand {
+  margin-bottom: 45px;
+}
+.entry-card h1 {
+  margin: 0;
+  font-family: Outfit, sans-serif;
+  font-size: clamp(34px, 8vw, 47px);
+  font-weight: 600;
+  letter-spacing: -0.045em;
+  line-height: 1.03;
+}
+.entry-card h1 em {
+  color: #efa2aa;
+  font-style: normal;
+}
+.entry-copy {
+  margin: 18px 0 28px;
+  color: #b5b2be;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.entry-card form {
+  display: grid;
+  gap: 10px;
+}
+.entry-card label {
+  color: #c5c1ca;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.17em;
+}
+.entry-card input {
+  width: 100%;
+  height: 66px;
+  padding: 0 18px;
+  border: 1px solid #ffffff40;
+  border-radius: 12px;
+  outline: none;
+  background: #111219;
+  color: #f5f2f5;
+  font-family: Outfit, sans-serif;
+  font-size: 29px;
+  font-weight: 600;
+  letter-spacing: 0.3em;
+  text-align: center;
+}
+.entry-card input::placeholder {
+  color: #777682;
+}
+.entry-card input:focus {
+  border-color: #efa2aa;
+  box-shadow: 0 0 0 3px #efa2aa22;
+}
+.entry-card form button {
+  height: 54px;
+  margin-top: 6px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 12px;
+  background: #efa2aa;
+  color: #201b21;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.entry-card form button:disabled {
+  opacity: 0.43;
+  cursor: default;
+}
+.entry-error {
+  color: #ffb9bd;
+  font-size: 12px;
+}
+.entry-foot {
+  margin: 36px 0 0;
+  color: #92909d;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+.seat-options {
+  display: grid;
+  gap: 10px;
+}
+.seat-options button {
+  min-height: 78px;
+  padding: 11px 15px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #ffffff32;
+  border-radius: 14px;
+  background: #ffffff08;
+  color: #f2f0f2;
+  text-align: left;
+  cursor: pointer;
+}
+.seat-options button:hover {
+  border-color: #efa2aa;
+  background: #efa2aa12;
+}
+.seat-options button span:nth-child(2) {
+  display: grid;
+  gap: 3px;
+}
+.seat-options b {
+  font-size: 16px;
+}
+.seat-options small {
+  color: #a9a6b3;
+  font-size: 11px;
+}
+.seat-options strong {
+  margin-left: auto;
+  color: #efa2aa;
+  font-size: 20px;
+}
+.seat-letter {
+  display: grid;
+  place-items: center;
+  width: 45px;
+  height: 45px;
+  border-radius: 11px;
+  background: #efa2aa;
+  color: #242029;
+  font-family: Outfit, sans-serif;
+  font-size: 24px;
+  font-weight: 700;
+}
+.seat-letter.blue {
+  background: #a9c9ee;
+}
+.level-pill.online span {
+  background: #acdcbf;
+}
+.reveal-button {
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid #efa2aa66;
+  border-radius: 9px;
+  background: #efa2aa18;
+  color: #ffd3d6;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.reveal-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.hidden-paint .liquid {
+  stroke: #818391;
+  stroke-width: 0.5;
+}
+.room-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.room-label span {
+  color: #aaa7b3;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+}
+.room-label b {
+  color: #e9e5ea;
+  font-size: 11px;
+}
+.room-label button {
+  min-height: 44px;
+  padding: 0 7px;
+  border: 0;
+  background: transparent;
+  color: #efa2aa;
+  font-size: 11px;
+  cursor: pointer;
+}
+@media (max-width: 700px) {
+  .reveal-button {
+    min-height: 48px;
+  }
+  .room-label button {
+    min-height: 48px;
+  }
+}
+@media (max-width: 400px) {
+  .entry-card {
+    padding: 26px;
+  }
+  .room-label {
+    gap: 7px;
+  }
+  .room-label span,
+  .room-label b,
+  .room-label button {
+    font-size: 9px;
+  }
+}

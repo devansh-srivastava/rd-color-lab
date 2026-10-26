@@ -1,15 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  applyMove,
-  initialState,
   isSolved,
   legalDestinations,
   type Color,
-  type GameState,
   type Player,
   type Tube as TubeData,
 } from "./game";
 import { isMuted, playCue, startAudio, toggleMute } from "./audio";
+import { Room, ROOM_CODE, type RoomSnapshot } from "./room";
 
 const names: Record<Player, string> = {
   devansh: "Devansh",
@@ -21,12 +19,28 @@ const paint: Record<Color, string> = {
   gold: "#f1d999",
 };
 
+function Brand() {
+  return (
+    <div className="brand">
+      <span className="brand-mark">
+        <i />
+        <i />
+        <i />
+      </span>
+      <span>
+        RD <b>COLOR LAB</b>
+      </span>
+    </div>
+  );
+}
+
 function Tube({
   tube,
   selected,
   legal,
   hinted,
   locked,
+  hidden,
   moving,
   onClick,
 }: {
@@ -35,15 +49,20 @@ function Tube({
   legal: boolean;
   hinted: boolean;
   locked: boolean;
+  hidden: boolean;
   moving: boolean;
   onClick: () => void;
 }) {
   const clip = `clip-${tube.id}`;
   return (
     <button
-      className={`tube-button${selected ? " selected" : ""}${legal ? " legal" : ""}${hinted ? " hinted" : ""}${locked ? " locked" : ""}${moving ? " moving" : ""}`}
+      className={`tube-button${selected ? " selected" : ""}${legal ? " legal" : ""}${hinted ? " hinted" : ""}${locked ? " locked" : ""}${moving ? " moving" : ""}${hidden ? " hidden-paint" : ""}`}
       onClick={onClick}
-      aria-label={`${tube.id}, ${tube.colors.length ? tube.colors.join(", ") : "empty"}${locked ? ", friend’s tube" : ""}`}
+      aria-label={
+        hidden
+          ? `${tube.id}, colors hidden by your friend`
+          : `${tube.id}, ${tube.colors.length ? tube.colors.join(", ") : "empty"}${locked ? ", friend’s tube" : ""}`
+      }
       aria-pressed={selected}
       type="button"
     >
@@ -61,7 +80,7 @@ function Tube({
               y={111 - (index + 1) * 25}
               width="56"
               height="25"
-              fill={paint[color]}
+              fill={hidden ? "#666977" : paint[color]}
               className="liquid"
             />
           ))}
@@ -99,41 +118,181 @@ function Tube({
   );
 }
 
-export default function App() {
-  const [state, setState] = useState<GameState>(initialState);
-  const [history, setHistory] = useState<GameState[]>([]);
-  const [role, setRole] = useState<Player>("devansh");
+function Entry({ onEnter }: { onEnter: () => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (code !== ROOM_CODE) {
+      setError("That room code is not right.");
+      return;
+    }
+    startAudio();
+    onEnter();
+  }
+  return (
+    <main className="entry-shell">
+      <div className="entry-card">
+        <Brand />
+        <p className="eyebrow">A GAME FOR TWO</p>
+        <h1>
+          One little lab.
+          <br />
+          <em>Two bright minds.</em>
+        </h1>
+        <p className="entry-copy">
+          Enter your room code to join the color sorting game.
+        </p>
+        <form onSubmit={submit}>
+          <label htmlFor="room-code">ROOM CODE</label>
+          <input
+            id="room-code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={6}
+            value={code}
+            onChange={(event) => {
+              setCode(event.target.value.replace(/\D/g, ""));
+              setError("");
+            }}
+            placeholder="••••••"
+            aria-describedby={error ? "code-error" : undefined}
+          />
+          <button type="submit" disabled={code.length !== 6}>
+            Continue <span>↗</span>
+          </button>
+        </form>
+        {error && (
+          <p id="code-error" className="entry-error" role="alert">
+            {error}
+          </p>
+        )}
+        <p className="entry-foot">LEVEL 01 · ONE COLOR AT A TIME</p>
+      </div>
+    </main>
+  );
+}
+
+function SeatPicker({ onChoose }: { onChoose: (role: Player) => void }) {
+  return (
+    <main className="entry-shell">
+      <div className="entry-card">
+        <Brand />
+        <p className="eyebrow">ROOM {ROOM_CODE}</p>
+        <h1>
+          Which station
+          <br />
+          <em>is yours?</em>
+        </h1>
+        <p className="entry-copy">
+          Pick your name. Your own tubes are always visible; your partner
+          chooses whether to reveal theirs.
+        </p>
+        <div className="seat-options">
+          <button onClick={() => onChoose("devansh")} type="button">
+            <span className="seat-letter">D</span>
+            <span>
+              <b>Devansh</b>
+              <small>Choose this station</small>
+            </span>
+            <strong>↗</strong>
+          </button>
+          <button onClick={() => onChoose("ridhima")} type="button">
+            <span className="seat-letter blue">R</span>
+            <span>
+              <b>Ridhima</b>
+              <small>Choose this station</small>
+            </span>
+            <strong>↗</strong>
+          </button>
+        </div>
+        <p className="entry-foot">THE SHARED TUBE IS VISIBLE TO BOTH</p>
+      </div>
+    </main>
+  );
+}
+
+function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
+  const [snapshot, setSnapshot] = useState<RoomSnapshot>({
+    game: { tubes: [], moves: 0, revision: 0, lastMove: null },
+    history: [],
+    revealed: { devansh: false, ridhima: false },
+  });
+  const [connected, setConnected] = useState(false);
+  const [connectionText, setConnectionText] = useState("Connecting…");
+  const [message, setMessage] = useState(
+    "Tap one of your tubes, then tap your station or the shared tube.",
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [hint, setHint] = useState<{
     actor: Player;
     from: string;
     to: string;
   } | null>(null);
-  const [message, setMessage] = useState(
-    "Tap one of your tubes, then tap your station or the shared tube.",
-  );
   const [muted, setMuted] = useState(isMuted);
   const [moving, setMoving] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
+  const room = useRef<Room | null>(null);
   const worker = useRef<Worker | null>(null);
-  const revision = useRef(state.revision);
+  const revision = useRef(0);
+  const lastSeenRevision = useRef<number | null>(null);
+  const state = snapshot.game;
   revision.current = state.revision;
-
-  useEffect(() => () => worker.current?.terminate(), []);
-
-  const solved = isSolved(state);
   const friend: Player = role === "devansh" ? "ridhima" : "devansh";
+  const solved = state.tubes.length === 5 && isSolved(state);
   const legal = selected ? legalDestinations(state, role, selected) : [];
 
-  function clearHintSearch() {
+  useEffect(() => {
+    const session = new Room(
+      role,
+      setSnapshot,
+      (ready, text) => {
+        setConnected(ready);
+        setConnectionText(text);
+      },
+      setMessage,
+      () => {
+        session.respondRestart(
+          window.confirm(
+            `${names[role === "devansh" ? "ridhima" : "devansh"]} wants to restart Level 1. Restart together?`,
+          ),
+        );
+      },
+    );
+    room.current = session;
+    return () => {
+      worker.current?.terminate();
+      session.close();
+      room.current = null;
+    };
+  }, [role]);
+
+  useEffect(() => {
+    if (lastSeenRevision.current === null) {
+      lastSeenRevision.current = state.revision;
+      return;
+    }
+    if (lastSeenRevision.current === state.revision) return;
+    lastSeenRevision.current = state.revision;
     worker.current?.terminate();
-    worker.current = null;
     setThinking(false);
-  }
+    setHint(null);
+    setSelected(null);
+    if (state.lastMove) {
+      setMoving(state.lastMove.from);
+      window.setTimeout(() => setMoving(null), 420);
+      playCue(isSolved(state) ? "win" : "pour");
+      setMessage(
+        isSolved(state)
+          ? "Perfectly sorted. Level 1 complete!"
+          : `${names[state.lastMove.actor]} poured ${state.lastMove.amount} ${state.lastMove.color} into ${state.lastMove.to}.`,
+      );
+    } else setMessage("The board was updated.");
+  }, [state]);
 
   function tap(id: string) {
     startAudio();
-    if (solved || moving) return;
+    if (!connected || solved || moving) return;
     const tube = state.tubes.find((item) => item.id === id)!;
     if (selected === id) {
       setSelected(null);
@@ -143,9 +302,7 @@ export default function App() {
     if (!selected) {
       if (tube.owner !== role && tube.owner !== "shared") {
         playCue("invalid");
-        setMessage(
-          `${names[friend]}'s tubes are locked. Switch player to use them.`,
-        );
+        setMessage(`${names[friend]}'s tubes are locked.`);
         return;
       }
       if (!tube.colors.length) {
@@ -159,62 +316,20 @@ export default function App() {
       playCue("select");
       return;
     }
-    const result = applyMove(state, role, selected, id);
-    if (!result.ok) {
+    if (!legal.includes(id)) {
       playCue("invalid");
-      setMessage(result.reason);
+      setMessage("That pour is not allowed. Try a glowing tube.");
       return;
     }
-    clearHintSearch();
-    setHistory([...history, state]);
-    setState(result.state);
+    room.current?.move(selected, id);
     setSelected(null);
     setHint(null);
-    setMoving(selected);
-    window.setTimeout(() => setMoving(null), 420);
-    playCue(isSolved(result.state) ? "win" : "pour");
-    setMessage(
-      isSolved(result.state)
-        ? "Perfectly sorted. Level 1 complete!"
-        : `${result.state.lastMove!.amount} ${result.state.lastMove!.color} poured into ${id}.`,
-    );
-  }
-
-  function chooseRole(next: Player) {
-    startAudio();
-    setRole(next);
-    setSelected(null);
-    setHint(null);
-    setMessage(`Playing as ${names[next]}. Your station is on top.`);
-    playCue("select");
-  }
-
-  function undo() {
-    if (!history.length) return;
-    startAudio();
-    clearHintSearch();
-    setState(history[history.length - 1]);
-    setHistory(history.slice(0, -1));
-    setSelected(null);
-    setHint(null);
-    setMessage("Last pour undone.");
-    playCue("select");
-  }
-
-  function restart() {
-    if (!window.confirm("Start Level 1 over?")) return;
-    clearHintSearch();
-    setState(initialState());
-    setHistory([]);
-    setSelected(null);
-    setHint(null);
-    setMessage("Fresh start. Choose a tube to begin.");
-    playCue("select");
+    setMessage("Pouring…");
   }
 
   function showHint() {
     startAudio();
-    if (thinking || solved) return;
+    if (thinking || solved || !connected) return;
     setThinking(true);
     setMessage("Looking for a path from this board…");
     worker.current?.terminate();
@@ -255,6 +370,7 @@ export default function App() {
       legal={legal.includes(tube.id)}
       hinted={hint?.from === tube.id || hint?.to === tube.id}
       locked={tube.owner !== role && tube.owner !== "shared"}
+      hidden={tube.owner === friend && !snapshot.revealed[friend]}
       moving={moving === tube.id}
       onClick={() => tap(tube.id)}
     />
@@ -264,19 +380,10 @@ export default function App() {
     <main className="game-shell">
       <div className="game-wrap">
         <header className="topbar">
-          <div className="brand">
-            <span className="brand-mark">
-              <i />
-              <i />
-              <i />
-            </span>
-            <span>
-              RD <b>COLOR LAB</b>
-            </span>
-          </div>
+          <Brand />
           <div className="top-actions">
-            <span className="level-pill">
-              <span /> LEVEL 01
+            <span className={`level-pill${connected ? " online" : ""}`}>
+              <span /> {connected ? "CONNECTED" : "WAITING"}
             </span>
             <button
               className="icon-button"
@@ -293,10 +400,9 @@ export default function App() {
             </button>
           </div>
         </header>
-
         <section className="intro">
           <div>
-            <p className="eyebrow">ONE COLOR AT A TIME</p>
+            <p className="eyebrow">LEVEL 01 · ONE COLOR AT A TIME</p>
             <h1>
               Make room for <em>color.</em>
             </h1>
@@ -307,7 +413,6 @@ export default function App() {
             Pass paint through the middle.
           </p>
         </section>
-
         <div className="board">
           <section className="station own" aria-label="Your station">
             <div className="station-heading">
@@ -316,7 +421,16 @@ export default function App() {
                 <span className="station-name">Your station</span>
                 <small>{names[role]}</small>
               </div>
-              <span className="station-tag">ACTIVE</span>
+              <button
+                className="reveal-button"
+                type="button"
+                disabled={!connected}
+                onClick={() =>
+                  room.current?.setReveal(!snapshot.revealed[role])
+                }
+              >
+                {snapshot.revealed[role] ? "HIDE MINE" : "REVEAL MINE"}
+              </button>
             </div>
             <div className="tube-row">
               {state.tubes
@@ -324,7 +438,6 @@ export default function App() {
                 .map(renderTube)}
             </div>
           </section>
-
           <section className="bridge" aria-label="Shared tube">
             <div className="bridge-line">
               <span>THE BRIDGE</span>
@@ -335,15 +448,17 @@ export default function App() {
                 <br />
                 through here <span>↗</span>
               </p>
-              {renderTube(state.tubes.find((tube) => tube.owner === "shared")!)}
+              {state.tubes.find((tube) => tube.owner === "shared") &&
+                renderTube(
+                  state.tubes.find((tube) => tube.owner === "shared")!,
+                )}
               <p className="bridge-note">
                 Both players
                 <br />
-                can use this tube.
+                can see this tube.
               </p>
             </div>
           </section>
-
           <section className="station friend" aria-label="Friend's station">
             <div className="station-heading">
               <div>
@@ -351,7 +466,9 @@ export default function App() {
                 <span className="station-name">Friend's station</span>
                 <small>{names[friend]}</small>
               </div>
-              <span className="station-tag">LOCKED</span>
+              <span className="station-tag">
+                {snapshot.revealed[friend] ? "REVEALED" : "HIDDEN"}
+              </span>
             </div>
             <div className="tube-row">
               {state.tubes
@@ -360,47 +477,53 @@ export default function App() {
             </div>
           </section>
         </div>
-
         <div className="play-footer">
           <div className="status">
             <span className={`status-spark${solved ? " won" : ""}`}>
               {solved ? "✦" : "◌"}
             </span>
-            <p role="status">{message}</p>
+            <p role="status">{connected ? message : connectionText}</p>
           </div>
           <div className="controls">
-            <button type="button" onClick={undo} disabled={!history.length}>
+            <button
+              type="button"
+              onClick={() => {
+                room.current?.undo();
+                setMessage("Undo requested…");
+              }}
+              disabled={
+                !connected ||
+                snapshot.history.length === 0 ||
+                state.lastMove?.actor !== role
+              }
+            >
               ↶ <span>Undo</span>
             </button>
             <button
               type="button"
               onClick={showHint}
-              disabled={thinking || solved}
+              disabled={!connected || thinking || solved}
             >
               ✧ <span>{thinking ? "Thinking" : "Hint"}</span>
             </button>
-            <button type="button" onClick={restart}>
+            <button
+              type="button"
+              onClick={() => {
+                room.current?.requestRestart();
+                setMessage("Waiting for your friend to confirm restart…");
+              }}
+              disabled={!connected}
+            >
               ⟳ <span>Restart</span>
             </button>
           </div>
         </div>
-
         <footer className="bottom-line">
-          <div className="role-switch">
-            <span>PLAY AS</span>
-            <button
-              className={role === "devansh" ? "current" : ""}
-              onClick={() => chooseRole("devansh")}
-              type="button"
-            >
-              Devansh
-            </button>
-            <button
-              className={role === "ridhima" ? "current" : ""}
-              onClick={() => chooseRole("ridhima")}
-              type="button"
-            >
-              Ridhima
+          <div className="room-label">
+            <span>ROOM {ROOM_CODE}</span>
+            <b>{names[role]}</b>
+            <button type="button" onClick={onLeave}>
+              Change player
             </button>
           </div>
           <span className="move-count">
@@ -410,4 +533,12 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+export default function App() {
+  const [entered, setEntered] = useState(false);
+  const [role, setRole] = useState<Player | null>(null);
+  if (!entered) return <Entry onEnter={() => setEntered(true)} />;
+  if (!role) return <SeatPicker onChoose={setRole} />;
+  return <Game role={role} onLeave={() => setRole(null)} />;
 }
