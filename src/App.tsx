@@ -11,7 +11,7 @@ import { Room, ROOM_CODE, type RoomSnapshot } from "./room";
 
 const names: Record<Player, string> = {
   devansh: "Devansh",
-  ridhima: "Ridhima",
+  ridhima: "Riddsss",
 };
 const paint: Record<Color, string> = {
   rose: "#efa2aa",
@@ -200,7 +200,7 @@ function SeatPicker({ onChoose }: { onChoose: (role: Player) => void }) {
           <button onClick={() => onChoose("ridhima")} type="button">
             <span className="seat-letter blue">R</span>
             <span>
-              <b>Ridhima</b>
+              <b>Riddsss</b>
               <small>Choose this station</small>
             </span>
             <strong>↗</strong>
@@ -522,7 +522,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
           <div className="room-label">
             <span>ROOM {ROOM_CODE}</span>
             <b>{names[role]}</b>
-            <button type="button" onClick={onLeave}>
+            <button type="button" onClick={() => { if (room.current) void room.current.leave().finally(onLeave); else onLeave() }}>
               Change player
             </button>
           </div>

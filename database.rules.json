@@ -1,0 +1,36 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$code": {
+        ".read": "$code === '112211' && auth !== null && (!data.exists() || data.child('seats/devansh').val() === auth.uid || data.child('seats/ridhima').val() === auth.uid || data.child('seats/devansh').val() === '' || data.child('seats/ridhima').val() === '')",
+        ".write": "$code === '112211' && auth !== null && !data.exists() && newData.child('schemaVersion').val() === 1 && newData.child('seats/devansh').val() === '' && newData.child('seats/ridhima').val() === ''",
+        "seats": {
+          "devansh": {
+            ".write": "auth !== null && ((data.val() === '' && newData.val() === auth.uid && root.child('rooms/112211/seats/ridhima').val() !== auth.uid) || (data.val() === auth.uid && (newData.val() === auth.uid || newData.val() === '')))"
+          },
+          "ridhima": {
+            ".write": "auth !== null && ((data.val() === '' && newData.val() === auth.uid && root.child('rooms/112211/seats/devansh').val() !== auth.uid) || (data.val() === auth.uid && (newData.val() === auth.uid || newData.val() === '')))"
+          }
+        },
+        "online": {
+          "devansh": { ".write": "auth !== null && root.child('rooms/112211/seats/devansh').val() === auth.uid && newData.isBoolean()" },
+          "ridhima": { ".write": "auth !== null && root.child('rooms/112211/seats/ridhima').val() === auth.uid && newData.isBoolean()" }
+        },
+        "revealed": {
+          "devansh": { ".write": "auth !== null && root.child('rooms/112211/seats/devansh').val() === auth.uid && newData.isBoolean()" },
+          "ridhima": { ".write": "auth !== null && root.child('rooms/112211/seats/ridhima').val() === auth.uid && newData.isBoolean()" }
+        },
+        "game": {
+          ".write": "auth !== null && (root.child('rooms/112211/seats/devansh').val() === auth.uid || root.child('rooms/112211/seats/ridhima').val() === auth.uid) && newData.child('state/revision').val() === data.child('state/revision').val() + 1",
+          ".validate": "newData.child('state/tubes').hasChildren(['0', '1', '2', '3', '4']) && newData.child('state/moves').isNumber() && !newData.child('history/50').exists()"
+        },
+        "restart": {
+          ".write": "auth !== null && (root.child('rooms/112211/seats/devansh').val() === auth.uid || root.child('rooms/112211/seats/ridhima').val() === auth.uid)",
+          ".validate": "(newData.child('from').val() === '' || newData.child('from').val() === 'devansh' || newData.child('from').val() === 'ridhima') && (newData.child('response').val() === '' || newData.child('response').val() === 'yes' || newData.child('response').val() === 'no')"
+        }
+      }
+    }
+  }
+}

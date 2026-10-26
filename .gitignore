@@ -6,3 +6,4 @@ dist/
 output/
 .playwright-mcp/
 *.tsbuildinfo
+*-debug.log

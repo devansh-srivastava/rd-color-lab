@@ -1,55 +1,74 @@
-import Peer, { type DataConnection } from "peerjs";
-import { applyMove, initialState, type GameState, type Player } from "./game";
+import { initializeApp } from 'firebase/app'
+import { getAuth, signInAnonymously } from 'firebase/auth'
+import { getDatabase, get, onDisconnect, onValue, ref, runTransaction, set, type Database, type Unsubscribe } from 'firebase/database'
+import { applyMove, initialState, type GameState, type Player } from './game'
 
-export const ROOM_CODE = "112211";
-const HOST_ID = "rd-color-lab-112211-devansh-v1";
-const SAVE_KEY = "rd-color-lab-room-112211";
+export const ROOM_CODE = '112211'
+const base = `rooms/${ROOM_CODE}`
 
-export type RoomSnapshot = {
-  game: GameState;
-  history: GameState[];
-  revealed: Record<Player, boolean>;
-};
+export type RoomSnapshot = { game: GameState; history: GameState[]; revealed: Record<Player, boolean> }
+type GameRecord = { state: GameState; history: GameState[] }
+type RoomData = {
+  schemaVersion: number
+  seats: Record<Player, string>
+  online: Record<Player, boolean>
+  game: GameRecord
+  revealed: Record<Player, boolean>
+  restart: { from: Player | ''; response: '' | 'yes' | 'no' }
+}
 
-type Command =
-  | { type: "move"; from: string; to: string }
-  | { type: "undo" }
-  | { type: "reveal"; value: boolean }
-  | { type: "restart-request" }
-  | { type: "restart-reply"; accepted: boolean };
-
-type Packet =
-  | { type: "snapshot"; snapshot: RoomSnapshot }
-  | { type: "notice"; text: string }
-  | { type: "restart-request" };
-
-const freshRoom = (): RoomSnapshot => ({
-  game: initialState(),
-  history: [],
-  revealed: { devansh: false, ridhima: false },
-});
-
-function savedRoom(): RoomSnapshot {
-  try {
-    const saved = localStorage.getItem(SAVE_KEY);
-    if (saved) {
-      const value = JSON.parse(saved) as RoomSnapshot;
-      if (value.game?.tubes?.length === 5 && value.revealed) return value;
-    }
-  } catch {
-    /* Start a new room if local storage is unavailable. */
+function initialRoom(): RoomData {
+  return {
+    schemaVersion: 1,
+    seats: { devansh: '', ridhima: '' },
+    online: { devansh: false, ridhima: false },
+    game: { state: initialState(), history: [] },
+    revealed: { devansh: false, ridhima: false },
+    restart: { from: '', response: '' },
   }
-  return freshRoom();
+}
+
+function gameRecord(value: Partial<GameRecord> | null): GameRecord {
+  const fallback = initialState()
+  const state = value?.state ?? fallback
+  return {
+    state: {
+      ...state,
+      tubes: (state.tubes ?? fallback.tubes).map(tube => ({ ...tube, colors: tube.colors ?? [] })),
+      lastMove: state.lastMove ?? null,
+    },
+    history: (value?.history ?? []).map(previous => ({
+      ...previous,
+      tubes: previous.tubes.map(tube => ({ ...tube, colors: tube.colors ?? [] })),
+      lastMove: previous.lastMove ?? null,
+    })),
+  }
+}
+
+function config() {
+  const env = import.meta.env
+  const settings = {
+    apiKey: env.VITE_FIREBASE_API_KEY,
+    authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
+    databaseURL: env.VITE_FIREBASE_DATABASE_URL,
+    projectId: env.VITE_FIREBASE_PROJECT_ID,
+    storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
+    messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    appId: env.VITE_FIREBASE_APP_ID,
+  }
+  if (Object.values(settings).some(value => !value)) throw new Error('Firebase setup is incomplete on this website.')
+  return settings
 }
 
 export class Room {
-  private peer: Peer;
-  private connection: DataConnection | null = null;
-  private retry: number | null = null;
-  private pendingSince = 0;
-  private snapshot: RoomSnapshot;
-  private pendingRestart = false;
-  private closed = false;
+  private db: Database | null = null
+  private uid = ''
+  private latest: RoomData | null = null
+  private networkOnline = false
+  private unsubscribers: Unsubscribe[] = []
+  private closed = false
+  private prompted = false
+  private finishingRestart = false
 
   constructor(
     readonly role: Player,
@@ -58,214 +77,155 @@ export class Room {
     private readonly onNotice: (text: string) => void,
     private readonly onRestartRequest: () => void,
   ) {
-    this.snapshot = role === "devansh" ? savedRoom() : freshRoom();
-    this.onSnapshot(this.snapshot);
-    this.peer = role === "devansh" ? new Peer(HOST_ID) : new Peer();
-    this.peer.on("open", () => {
-      if (role === "devansh")
-        this.onStatus(false, "Waiting for Ridhima to join…");
-      else {
-        this.onStatus(false, "Looking for Devansh…");
-        this.connectToHost();
-        this.retry = window.setInterval(() => this.connectToHost(), 4000);
-      }
-    });
-    this.peer.on("connection", (connection) => {
-      if (role !== "devansh" || this.connection?.open) {
-        connection.close();
-        return;
-      }
-      this.attach(connection);
-    });
-    this.peer.on("disconnected", () => {
-      if (!this.connection?.open)
-        this.onStatus(false, "Connection lost. Reconnecting…");
-      if (!this.closed)
-        window.setTimeout(() => {
-          if (this.peer.disconnected && !this.peer.destroyed)
-            this.peer.reconnect();
-        }, 1500);
-    });
-    this.peer.on("error", (error) => {
-      if (error.type === "peer-unavailable" && role === "ridhima") {
-        this.pendingSince = 0;
-        return;
-      }
-      if (error.type === "unavailable-id")
-        this.onStatus(
-          false,
-          "Devansh is already in this room. Choose Ridhima on this phone.",
-        );
-      else
-        this.onStatus(
-          false,
-          "Could not connect. Check your internet and try again.",
-        );
-    });
+    void this.start()
   }
 
-  private connectToHost() {
-    if (this.closed || this.role !== "ridhima" || this.connection?.open) return;
-    if (this.connection && Date.now() - this.pendingSince < 12000) return;
-    this.connection?.close();
-    this.pendingSince = Date.now();
-    this.attach(
-      this.peer.connect(HOST_ID, { serialization: "json", reliable: true }),
-    );
+  private at(path = '') {
+    if (!this.db) throw new Error('Room is not ready.')
+    return ref(this.db, path ? `${base}/${path}` : base)
   }
 
-  private attach(connection: DataConnection) {
-    this.connection = connection;
-    connection.on("open", () => {
-      if (this.connection !== connection) return;
-      this.onStatus(true, "Connected");
-      this.pendingSince = 0;
-      if (this.role === "devansh")
-        connection.send({
-          type: "snapshot",
-          snapshot: this.snapshot,
-        } satisfies Packet);
-    });
-    connection.on("data", (data) => {
-      if (this.connection !== connection) return;
-      if (this.role === "devansh") this.handleCommand(data as Command);
-      else this.handlePacket(data as Packet);
-    });
-    connection.on("close", () => {
-      if (this.connection !== connection) return;
-      this.connection = null;
-      this.pendingSince = 0;
-      this.pendingRestart = false;
-      this.onStatus(
-        false,
-        this.role === "devansh"
-          ? "Ridhima disconnected. Waiting for her…"
-          : "Devansh disconnected. Reconnecting…",
-      );
-    });
-    connection.on("error", () => {
-      if (this.connection === connection)
-        this.onStatus(false, "Connection interrupted. Reconnecting…");
-    });
-  }
-
-  private handlePacket(packet: Packet) {
-    if (!packet || typeof packet !== "object") return;
-    if (packet.type === "snapshot") {
-      this.snapshot = packet.snapshot;
-      this.onSnapshot(packet.snapshot);
-    } else if (packet.type === "notice") this.onNotice(packet.text);
-    else if (packet.type === "restart-request") this.onRestartRequest();
-  }
-
-  private handleCommand(command: Command) {
-    if (!command || typeof command !== "object") return;
-    if (command.type === "move")
-      this.moveAs("ridhima", command.from, command.to);
-    else if (command.type === "undo") this.undoAs("ridhima");
-    else if (command.type === "reveal") this.revealAs("ridhima", command.value);
-    else if (command.type === "restart-request") this.onRestartRequest();
-    else if (command.type === "restart-reply") {
-      if (this.pendingRestart && command.accepted) this.commit(freshRoom());
-      this.pendingRestart = false;
-      if (!command.accepted) this.onNotice("Ridhima kept the current game.");
-    }
-  }
-
-  private commit(snapshot: RoomSnapshot) {
-    this.snapshot = snapshot;
-    this.onSnapshot(snapshot);
+  private async start() {
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(snapshot));
-    } catch {
-      /* Gameplay still works without persistence. */
+      const app = initializeApp(config())
+      const auth = getAuth(app)
+      const db = getDatabase(app)
+      await auth.authStateReady()
+      this.uid = (auth.currentUser ?? (await signInAnonymously(auth)).user).uid
+      if (this.closed) return
+      this.db = db
+      const roomRef = this.at()
+      await runTransaction(roomRef, current => current === null ? initialRoom() : undefined, { applyLocally: false })
+      const beforeClaim = (await get(roomRef)).val() as RoomData | null
+      if (!beforeClaim) throw new Error('Could not open the room. Check the database rules.')
+      const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
+      if (beforeClaim.seats?.[friend] === this.uid) throw new Error('This browser already owns the other station. Choose that name or use the other phone.')
+      const seat = await runTransaction(this.at(`seats/${this.role}`), current =>
+        current === null || current === '' || current === this.uid ? this.uid : undefined,
+      )
+      if (!seat.committed || seat.snapshot.val() !== this.uid) throw new Error(`${this.role === 'devansh' ? 'Devansh' : 'Riddsss'} is already selected on another phone.`)
+      if (this.closed) {
+        await runTransaction(this.at(`seats/${this.role}`), current => current === this.uid ? '' : undefined)
+        return
+      }
+      this.unsubscribers.push(onValue(roomRef, snapshot => this.receive(snapshot.val() as RoomData | null), () => this.onStatus(false, 'Room access was denied. Check Firebase rules.')))
+      this.unsubscribers.push(onValue(ref(this.db, '.info/connected'), snapshot => {
+        this.networkOnline = snapshot.val() === true
+        if (this.networkOnline && !this.closed) void this.markOnline()
+        this.updateStatus()
+      }))
+    } catch (error) {
+      this.onStatus(false, error instanceof Error ? error.message : 'Could not join the room.')
     }
-    if (this.connection?.open)
-      this.connection.send({ type: "snapshot", snapshot } satisfies Packet);
   }
 
-  private tell(text: string) {
-    this.onNotice(text);
-    if (this.connection?.open)
-      this.connection.send({ type: "notice", text } satisfies Packet);
+  private async markOnline() {
+    try {
+      const onlineRef = this.at(`online/${this.role}`)
+      await onDisconnect(onlineRef).set(false)
+      await set(onlineRef, true)
+    } catch { this.onStatus(false, 'Could not mark this phone online. Check Firebase rules.') }
   }
 
-  private moveAs(actor: Player, from: string, to: string) {
-    const result = applyMove(this.snapshot.game, actor, from, to);
-    if (!result.ok) {
-      this.tell(result.reason);
-      return;
+  private receive(value: RoomData | null) {
+    if (!value || this.closed) return
+    this.latest = value
+    const record = gameRecord(value.game)
+    this.onSnapshot({ game: record.state, history: record.history, revealed: value.revealed ?? { devansh: false, ridhima: false } })
+    this.updateStatus()
+    const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
+    if (!value.restart?.from) this.prompted = false
+    if (value.restart?.from === friend && value.restart.response === '' && !this.prompted) {
+      this.prompted = true
+      this.onRestartRequest()
     }
-    this.commit({
-      ...this.snapshot,
-      game: result.state,
-      history: [...this.snapshot.history, this.snapshot.game],
-    });
+    if (value.restart?.from === this.role && value.restart.response && !this.finishingRestart) void this.finishRestart(value.restart.response)
   }
 
-  move(from: string, to: string) {
-    if (!this.connection?.open) return;
-    if (this.role === "devansh") this.moveAs("devansh", from, to);
-    else this.connection.send({ type: "move", from, to } satisfies Command);
+  private updateStatus() {
+    const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
+    if (!this.networkOnline) this.onStatus(false, 'Reconnecting to the room…')
+    else if (!this.latest?.online?.[friend]) this.onStatus(false, `Waiting for ${friend === 'devansh' ? 'Devansh' : 'Riddsss'}…`)
+    else this.onStatus(true, 'Connected')
   }
 
-  private undoAs(actor: Player) {
-    const previous = this.snapshot.history.at(-1);
-    if (!previous || this.snapshot.game.lastMove?.actor !== actor) return;
-    this.commit({
-      ...this.snapshot,
-      game: {
-        ...previous,
-        revision: this.snapshot.game.revision + 1,
-        lastMove: null,
-      },
-      history: this.snapshot.history.slice(0, -1),
-    });
-    this.tell("Last pour undone.");
+  async move(from: string, to: string) {
+    try {
+      const result = await runTransaction(this.at('game'), current => {
+        if (!current) return undefined
+        const record = gameRecord(current as GameRecord)
+        const move = applyMove(record.state, this.role, from, to)
+        if (!move.ok) return undefined
+        return { state: move.state, history: [...record.history, record.state].slice(-50) } satisfies GameRecord
+      }, { applyLocally: false })
+      if (!result.committed) this.onNotice('That pour is no longer available. Try again.')
+    } catch { this.onNotice('Could not save the pour. Check your connection.') }
   }
 
-  undo() {
-    if (!this.connection?.open) return;
-    if (this.role === "devansh") this.undoAs("devansh");
-    else this.connection.send({ type: "undo" } satisfies Command);
+  async undo() {
+    try {
+      const result = await runTransaction(this.at('game'), current => {
+        if (!current) return undefined
+        const record = gameRecord(current as GameRecord)
+        const previous = record.history.at(-1)
+        if (!previous || record.state.lastMove?.actor !== this.role) return undefined
+        return { state: { ...previous, revision: record.state.revision + 1, lastMove: null }, history: record.history.slice(0, -1) } satisfies GameRecord
+      }, { applyLocally: false })
+      if (!result.committed) this.onNotice('Only the player who made the last pour can undo it.')
+    } catch { this.onNotice('Could not undo. Check your connection.') }
   }
 
-  private revealAs(actor: Player, value: boolean) {
-    this.commit({
-      ...this.snapshot,
-      revealed: { ...this.snapshot.revealed, [actor]: value },
-    });
+  async setReveal(value: boolean) {
+    try { await set(this.at(`revealed/${this.role}`), value) }
+    catch { this.onNotice('Could not change visibility. Check your connection.') }
   }
 
-  setReveal(value: boolean) {
-    if (!this.connection?.open) return;
-    if (this.role === "devansh") this.revealAs("devansh", value);
-    else this.connection.send({ type: "reveal", value } satisfies Command);
+  async requestRestart() {
+    try {
+      const result = await runTransaction(this.at('restart'), current =>
+        !current?.from ? { from: this.role, response: '' } : undefined,
+      )
+      if (!result.committed) this.onNotice('A restart request is already waiting.')
+    } catch { this.onNotice('Could not request a restart.') }
   }
 
-  requestRestart() {
-    if (!this.connection?.open) return;
-    if (this.role === "devansh") {
-      this.pendingRestart = true;
-      this.connection.send({ type: "restart-request" } satisfies Packet);
-    } else this.connection.send({ type: "restart-request" } satisfies Command);
+  async respondRestart(accepted: boolean) {
+    try {
+      await runTransaction(this.at('restart'), current =>
+        current?.from && current.from !== this.role && current.response === ''
+          ? { ...current, response: accepted ? 'yes' : 'no' }
+          : undefined,
+      )
+    } catch { this.onNotice('Could not answer the restart request.') }
   }
 
-  respondRestart(accepted: boolean) {
-    if (this.role === "devansh") {
-      if (accepted) this.commit(freshRoom());
-      else this.tell("Devansh kept the current game.");
-    } else if (this.connection?.open)
-      this.connection.send({
-        type: "restart-reply",
-        accepted,
-      } satisfies Command);
+  private async finishRestart(response: 'yes' | 'no') {
+    this.finishingRestart = true
+    try {
+      if (response === 'yes') {
+        await runTransaction(this.at('game'), current => {
+          if (!current) return undefined
+          const record = gameRecord(current as GameRecord)
+          return { state: { ...initialState(), revision: record.state.revision + 1 }, history: [] } satisfies GameRecord
+        }, { applyLocally: false })
+      } else this.onNotice('Your friend kept the current game.')
+      await set(this.at('restart'), { from: '', response: '' })
+    } catch { this.onNotice('Could not finish the restart.') }
+    finally { this.finishingRestart = false }
+  }
+
+  async leave() {
+    try {
+      await onDisconnect(this.at(`online/${this.role}`)).cancel()
+      await set(this.at(`online/${this.role}`), false)
+      await runTransaction(this.at(`seats/${this.role}`), current => current === this.uid ? '' : undefined)
+    } catch { /* The same anonymous browser can still resume its seat. */ }
+    this.close()
   }
 
   close() {
-    this.closed = true;
-    if (this.retry !== null) window.clearInterval(this.retry);
-    this.connection?.close();
-    this.peer.destroy();
+    this.closed = true
+    this.unsubscribers.forEach(unsubscribe => unsubscribe())
+    this.unsubscribers = []
   }
 }
