@@ -1,8 +1,10 @@
 # RD Color Lab
 
-Level 1 of a cooperative color sorting game for Devansh and Riddsss.
+A cooperative color sorting game for Devansh and Riddsss with six selectable levels.
 
-Open the site on both phones, enter **112211**, and choose one name per phone. The game begins when both screens show **Connected**. Each player sees their own colors and the shared tube. Private colors start hidden from the other player; **Reveal mine** shows them until that player hides them again.
+Open the site on both phones, enter **112211**, choose one name per phone, and pick any level. Either player can switch levels with the **Levels** button. Each level keeps its own progress in the shared room. You can pour when both screens show **Connected**. Each player sees their own colors and the shared tube. Private colors start hidden from the other player; **Reveal mine** shows them until that player hides them again.
+
+Levels 2–6 have shortest verified solutions of 20, 22, 26, 30, and 38 combined pours. Both players have to use the shared tube. Level 1 remains the original 13-pour puzzle.
 
 The room uses Firebase Anonymous Authentication and Realtime Database. Firebase Web config is public browser configuration, but this repository keeps it out of source files. Put the seven values in the ignored `.env.local` file for local development and in GitHub Actions secrets for deployment. Never use a service-account key.
 
@@ -13,4 +15,4 @@ npm ci
 npm run dev
 ```
 
-Use `npm test` for the established Level 1 rules and `npm run build` for the production bundle. Deploy `database.rules.json` to the Firebase project before using the hosted game.
+Use `npm run build` for the production bundle. Deploy `database.rules.json` to the Firebase project before using the hosted game.

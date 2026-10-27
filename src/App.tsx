@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
+  firstLevel,
+  getLevel,
   isSolved,
   legalDestinations,
+  levels,
   type Color,
+  type LevelId,
   type Player,
   type Tube as TubeData,
 } from "./game";
@@ -17,6 +21,10 @@ const paint: Record<Color, string> = {
   rose: "#efa2aa",
   blue: "#a9c9ee",
   gold: "#f1d999",
+  mint: "#a8ddc4",
+  lilac: "#c7b5ec",
+  peach: "#f3bd9e",
+  teal: "#8ed8dc",
 };
 
 function Brand() {
@@ -167,7 +175,7 @@ function Entry({ onEnter }: { onEnter: () => void }) {
             {error}
           </p>
         )}
-        <p className="entry-foot">LEVEL 01 · ONE COLOR AT A TIME</p>
+        <p className="entry-foot">SIX LEVELS · ONE SHARED LAB</p>
       </div>
     </main>
   );
@@ -214,6 +222,7 @@ function SeatPicker({ onChoose }: { onChoose: (role: Player) => void }) {
 
 function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>({
+    levelId: firstLevel,
     game: { tubes: [], moves: 0, revision: 0, lastMove: null },
     history: [],
     revealed: { devansh: false, ridhima: false },
@@ -232,29 +241,32 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
   const [muted, setMuted] = useState(isMuted);
   const [moving, setMoving] = useState<string | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [showLevels, setShowLevels] = useState(true);
+  const [roomReady, setRoomReady] = useState(false);
   const room = useRef<Room | null>(null);
   const worker = useRef<Worker | null>(null);
-  const revision = useRef(0);
-  const lastSeenRevision = useRef<number | null>(null);
+  const revision = useRef("");
+  const lastSeenRevision = useRef<string | null>(null);
   const state = snapshot.game;
-  revision.current = state.revision;
+  const level = getLevel(snapshot.levelId);
+  revision.current = `${level.id}:${state.revision}`;
   const friend: Player = role === "devansh" ? "ridhima" : "devansh";
-  const solved = state.tubes.length === 5 && isSolved(state);
+  const solved = state.tubes.length > 0 && isSolved(state);
   const legal = selected ? legalDestinations(state, role, selected) : [];
 
   useEffect(() => {
     const session = new Room(
       role,
-      setSnapshot,
+      (next) => { setSnapshot(next); setRoomReady(true); },
       (ready, text) => {
         setConnected(ready);
         setConnectionText(text);
       },
       setMessage,
-      () => {
+      (levelId) => {
         session.respondRestart(
           window.confirm(
-            `${names[role === "devansh" ? "ridhima" : "devansh"]} wants to restart Level 1. Restart together?`,
+            `${names[role === "devansh" ? "ridhima" : "devansh"]} wants to restart ${getLevel(levelId).name}. Restart together?`,
           ),
         );
       },
@@ -268,27 +280,31 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
   }, [role]);
 
   useEffect(() => {
+    const key = `${level.id}:${state.revision}`;
     if (lastSeenRevision.current === null) {
-      lastSeenRevision.current = state.revision;
+      lastSeenRevision.current = key;
       return;
     }
-    if (lastSeenRevision.current === state.revision) return;
-    lastSeenRevision.current = state.revision;
+    if (lastSeenRevision.current === key) return;
+    const changedLevel = !lastSeenRevision.current.startsWith(`${level.id}:`);
+    lastSeenRevision.current = key;
     worker.current?.terminate();
     setThinking(false);
     setHint(null);
     setSelected(null);
-    if (state.lastMove) {
+    if (changedLevel) {
+      setMessage(`${level.name} is ready. Work together through the shared tube.`);
+    } else if (state.lastMove) {
       setMoving(state.lastMove.from);
       window.setTimeout(() => setMoving(null), 420);
       playCue(isSolved(state) ? "win" : "pour");
       setMessage(
         isSolved(state)
-          ? "Perfectly sorted. Level 1 complete!"
+          ? `Perfectly sorted. ${level.name} complete!`
           : `${names[state.lastMove.actor]} poured ${state.lastMove.amount} ${state.lastMove.color} into ${state.lastMove.to}.`,
       );
     } else setMessage("The board was updated.");
-  }, [state]);
+  }, [state, level]);
 
   function tap(id: string) {
     startAudio();
@@ -338,14 +354,16 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
       { type: "module" },
     );
     worker.current = nextWorker;
+    const requestKey = revision.current;
     nextWorker.onmessage = ({
       data,
     }: MessageEvent<{
       hint: { actor: Player; from: string; to: string } | null;
       stuck: boolean;
+      limited: boolean;
       revision: number;
     }>) => {
-      if (data.revision !== revision.current) return;
+      if (requestKey !== revision.current) return;
       setThinking(false);
       setHint(data.hint);
       setSelected(null);
@@ -355,7 +373,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
         );
       else
         setMessage(
-          data.stuck ? "This position is stuck. Try Undo." : "Level complete!",
+          data.limited ? "This path needs more thought. Try another pour or Undo." : data.stuck ? "This position is stuck. Try Undo." : "Level complete!",
         );
       nextWorker.terminate();
     };
@@ -378,10 +396,36 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
 
   return (
     <main className="game-shell">
+      {showLevels && <div className="level-overlay" role="dialog" aria-modal="true" aria-label="Choose a level">
+        <div className="level-card">
+          <p className="eyebrow">ROOM {ROOM_CODE} · CHOOSE TOGETHER</p>
+          <h2>Pick a <em>level.</em></h2>
+          <p className="level-help">Either player can open a level. Your progress in each one is saved for this room.</p>
+          <div className="level-grid">
+            {levels.map((item, index) => <button
+              key={item.id}
+              type="button"
+              disabled={!roomReady}
+              onClick={() => {
+                setShowLevels(false);
+                if (item.id !== snapshot.levelId) void room.current?.selectLevel(item.id as LevelId);
+              }}
+              className={item.id === snapshot.levelId ? "active" : ""}
+            >
+              <span className="level-number">{String(index + 1).padStart(2, "0")}</span>
+              <span><b>{item.name}</b><small>{item.tier} · {item.moves} moves</small></span>
+              <strong>↗</strong>
+            </button>)}
+          </div>
+          {!roomReady && <p className="level-help">Opening the room…</p>}
+          <button className="level-close" type="button" onClick={() => setShowLevels(false)} disabled={!roomReady}>Continue current level</button>
+        </div>
+      </div>}
       <div className="game-wrap">
         <header className="topbar">
           <Brand />
           <div className="top-actions">
+            <button className="level-open" type="button" onClick={() => setShowLevels(true)}>LEVELS</button>
             <span className={`level-pill${connected ? " online" : ""}`}>
               <span /> {connected ? "CONNECTED" : "WAITING"}
             </span>
@@ -402,7 +446,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
         </header>
         <section className="intro">
           <div>
-            <p className="eyebrow">LEVEL 01 · ONE COLOR AT A TIME</p>
+            <p className="eyebrow">LEVEL {level.id.slice(-2)} · {level.name.toUpperCase()}</p>
             <h1>
               Make room for <em>color.</em>
             </h1>
@@ -432,7 +476,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
                 {snapshot.revealed[role] ? "HIDE MINE" : "REVEAL MINE"}
               </button>
             </div>
-            <div className="tube-row">
+            <div className={`tube-row${state.tubes.filter(tube => tube.owner === role).length === 4 ? " four" : ""}`}>
               {state.tubes
                 .filter((tube) => tube.owner === role)
                 .map(renderTube)}
@@ -470,7 +514,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
                 {snapshot.revealed[friend] ? "REVEALED" : "HIDDEN"}
               </span>
             </div>
-            <div className="tube-row">
+            <div className={`tube-row${state.tubes.filter(tube => tube.owner === friend).length === 4 ? " four" : ""}`}>
               {state.tubes
                 .filter((tube) => tube.owner === friend)
                 .map(renderTube)}

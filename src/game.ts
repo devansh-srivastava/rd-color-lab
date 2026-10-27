@@ -1,5 +1,5 @@
 export type Player = "devansh" | "ridhima";
-export type Color = "rose" | "blue" | "gold";
+export type Color = "rose" | "blue" | "gold" | "mint" | "lilac" | "peach" | "teal";
 export type Tube = { id: string; owner: Player | "shared"; colors: Color[] };
 export type Move = {
   actor: Player;
@@ -20,14 +20,36 @@ export type MoveResult =
 
 export const capacity = 4;
 
-export const initialState = (): GameState => ({
-  tubes: [
-    { id: "D1", owner: "devansh", colors: ["rose", "blue", "gold", "rose"] },
-    { id: "D2", owner: "devansh", colors: [] },
-    { id: "R1", owner: "ridhima", colors: ["blue", "gold", "rose", "blue"] },
-    { id: "R2", owner: "ridhima", colors: [] },
-    { id: "S", owner: "shared", colors: ["gold", "rose", "blue", "gold"] },
-  ],
+const colorKey: Record<string, Color> = {
+  a: "rose", b: "blue", c: "gold", d: "mint",
+  e: "lilac", f: "peach", g: "teal",
+};
+
+export const levels = [
+  { id: "level-01", name: "One color at a time", tier: "First steps", moves: 13, devansh: ["abca", ""], riddsss: ["bcab", ""], shared: "cabc" },
+  { id: "level-02", name: "Crossing paths", tier: "A little further", moves: 20, devansh: ["cccd", "bdea", "eaad"], riddsss: ["ecba", "bebd", ""], shared: "" },
+  { id: "level-03", name: "Color current", tier: "A little further", moves: 22, devansh: ["cecb", "dcbe", "daac"], riddsss: ["aede", "dabb", ""], shared: "" },
+  { id: "level-04", name: "The long way round", tier: "A little further", moves: 26, devansh: ["dbdb", "edca", "acea"], riddsss: ["deab", "cecb", ""], shared: "" },
+  { id: "level-05", name: "Tangled threads", tier: "A real puzzle", moves: 30, devansh: ["abde", "bfab", "fcea", "dfeb"], riddsss: ["ccda", "defc", ""], shared: "" },
+  { id: "level-06", name: "Final spectrum", tier: "A real puzzle", moves: 38, devansh: ["ecgd", "dbfb", "fcga", "gdce"], riddsss: ["dgfb", "efea", "caba", ""], shared: "" },
+] as const;
+
+export type LevelId = (typeof levels)[number]["id"];
+export const firstLevel: LevelId = "level-01";
+export function getLevel(id: string) { return levels.find(level => level.id === id) ?? levels[0]; }
+
+export const initialState = (levelId: LevelId = firstLevel): GameState => ({
+  tubes: (() => {
+    const level = getLevel(levelId);
+    const makeTube = (id: string, owner: Tube["owner"], pattern: string): Tube => ({
+      id, owner, colors: [...pattern].map(letter => colorKey[letter]),
+    });
+    return [
+      ...level.devansh.map((pattern, index) => makeTube(`D${index + 1}`, "devansh", pattern)),
+      ...level.riddsss.map((pattern, index) => makeTube(`R${index + 1}`, "ridhima", pattern)),
+      makeTube("S", "shared", level.shared),
+    ];
+  })(),
   moves: 0,
   revision: 0,
   lastMove: null,

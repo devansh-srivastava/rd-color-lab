@@ -26,6 +26,16 @@
           ".write": "auth !== null && (root.child('rooms/112211/seats/devansh').val() === auth.uid || root.child('rooms/112211/seats/ridhima').val() === auth.uid) && newData.child('state/revision').val() === data.child('state/revision').val() + 1",
           ".validate": "newData.child('state/tubes').hasChildren(['0', '1', '2', '3', '4']) && newData.child('state/moves').isNumber() && !newData.child('history/50').exists()"
         },
+        "activeLevel": {
+          ".write": "auth !== null && (root.child('rooms/112211/seats/devansh').val() === auth.uid || root.child('rooms/112211/seats/ridhima').val() === auth.uid)",
+          ".validate": "newData.val() === 'level-01' || newData.val() === 'level-02' || newData.val() === 'level-03' || newData.val() === 'level-04' || newData.val() === 'level-05' || newData.val() === 'level-06'"
+        },
+        "games": {
+          "$levelId": {
+            ".write": "auth !== null && ($levelId === 'level-02' || $levelId === 'level-03' || $levelId === 'level-04' || $levelId === 'level-05' || $levelId === 'level-06') && (root.child('rooms/112211/seats/devansh').val() === auth.uid || root.child('rooms/112211/seats/ridhima').val() === auth.uid) && ((!data.exists() && newData.child('state/revision').val() === 0) || (data.exists() && newData.child('state/revision').val() === data.child('state/revision').val() + 1))",
+            ".validate": "newData.child('state/tubes').hasChildren(['0', '1', '2', '3', '4', '5', '6']) && newData.child('state/moves').isNumber() && !newData.child('history/50').exists()"
+          }
+        },
         "restart": {
           ".write": "auth !== null && (root.child('rooms/112211/seats/devansh').val() === auth.uid || root.child('rooms/112211/seats/ridhima').val() === auth.uid)",
           ".validate": "(newData.child('from').val() === '' || newData.child('from').val() === 'devansh' || newData.child('from').val() === 'ridhima') && (newData.child('response').val() === '' || newData.child('response').val() === 'yes' || newData.child('response').val() === 'no')"

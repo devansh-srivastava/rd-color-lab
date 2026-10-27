@@ -1,20 +1,22 @@
 import { initializeApp } from 'firebase/app'
 import { getAuth, signInAnonymously } from 'firebase/auth'
 import { getDatabase, get, onDisconnect, onValue, ref, runTransaction, set, type Database, type Unsubscribe } from 'firebase/database'
-import { applyMove, initialState, type GameState, type Player } from './game'
+import { applyMove, firstLevel, getLevel, initialState, type GameState, type LevelId, type Player } from './game'
 
 export const ROOM_CODE = '112211'
 const base = `rooms/${ROOM_CODE}`
 
-export type RoomSnapshot = { game: GameState; history: GameState[]; revealed: Record<Player, boolean> }
+export type RoomSnapshot = { levelId: LevelId; game: GameState; history: GameState[]; revealed: Record<Player, boolean> }
 type GameRecord = { state: GameState; history: GameState[] }
 type RoomData = {
   schemaVersion: number
   seats: Record<Player, string>
   online: Record<Player, boolean>
   game: GameRecord
+  games?: Record<string, GameRecord>
+  activeLevel?: LevelId
   revealed: Record<Player, boolean>
-  restart: { from: Player | ''; response: '' | 'yes' | 'no' }
+  restart: { from: Player | ''; response: '' | 'yes' | 'no'; levelId?: LevelId }
 }
 
 function initialRoom(): RoomData {
@@ -23,13 +25,14 @@ function initialRoom(): RoomData {
     seats: { devansh: '', ridhima: '' },
     online: { devansh: false, ridhima: false },
     game: { state: initialState(), history: [] },
+    activeLevel: firstLevel,
     revealed: { devansh: false, ridhima: false },
     restart: { from: '', response: '' },
   }
 }
 
-function gameRecord(value: Partial<GameRecord> | null): GameRecord {
-  const fallback = initialState()
+function gameRecord(value: Partial<GameRecord> | null, levelId: LevelId = firstLevel): GameRecord {
+  const fallback = initialState(levelId)
   const state = value?.state ?? fallback
   return {
     state: {
@@ -69,13 +72,14 @@ export class Room {
   private closed = false
   private prompted = false
   private finishingRestart = false
+  private activeLevel: LevelId = firstLevel
 
   constructor(
     readonly role: Player,
     private readonly onSnapshot: (snapshot: RoomSnapshot) => void,
     private readonly onStatus: (connected: boolean, text: string) => void,
     private readonly onNotice: (text: string) => void,
-    private readonly onRestartRequest: () => void,
+    private readonly onRestartRequest: (levelId: LevelId) => void,
   ) {
     void this.start()
   }
@@ -130,16 +134,18 @@ export class Room {
   private receive(value: RoomData | null) {
     if (!value || this.closed) return
     this.latest = value
-    const record = gameRecord(value.game)
-    this.onSnapshot({ game: record.state, history: record.history, revealed: value.revealed ?? { devansh: false, ridhima: false } })
+    const levelId = getLevel(value.activeLevel ?? firstLevel).id
+    this.activeLevel = levelId
+    const record = gameRecord(levelId === firstLevel ? value.game : value.games?.[levelId] ?? null, levelId)
+    this.onSnapshot({ levelId, game: record.state, history: record.history, revealed: value.revealed ?? { devansh: false, ridhima: false } })
     this.updateStatus()
     const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
     if (!value.restart?.from) this.prompted = false
     if (value.restart?.from === friend && value.restart.response === '' && !this.prompted) {
       this.prompted = true
-      this.onRestartRequest()
+      this.onRestartRequest(getLevel(value.restart.levelId ?? firstLevel).id)
     }
-    if (value.restart?.from === this.role && value.restart.response && !this.finishingRestart) void this.finishRestart(value.restart.response)
+    if (value.restart?.from === this.role && value.restart.response && !this.finishingRestart) void this.finishRestart(value.restart.response, getLevel(value.restart.levelId ?? firstLevel).id)
   }
 
   private updateStatus() {
@@ -151,9 +157,10 @@ export class Room {
 
   async move(from: string, to: string) {
     try {
-      const result = await runTransaction(this.at('game'), current => {
+      const levelId = this.activeLevel
+      const result = await runTransaction(this.at(this.gamePath(levelId)), current => {
         if (!current) return undefined
-        const record = gameRecord(current as GameRecord)
+        const record = gameRecord(current as GameRecord, levelId)
         const move = applyMove(record.state, this.role, from, to)
         if (!move.ok) return undefined
         return { state: move.state, history: [...record.history, record.state].slice(-50) } satisfies GameRecord
@@ -164,9 +171,10 @@ export class Room {
 
   async undo() {
     try {
-      const result = await runTransaction(this.at('game'), current => {
+      const levelId = this.activeLevel
+      const result = await runTransaction(this.at(this.gamePath(levelId)), current => {
         if (!current) return undefined
-        const record = gameRecord(current as GameRecord)
+        const record = gameRecord(current as GameRecord, levelId)
         const previous = record.history.at(-1)
         if (!previous || record.state.lastMove?.actor !== this.role) return undefined
         return { state: { ...previous, revision: record.state.revision + 1, lastMove: null }, history: record.history.slice(0, -1) } satisfies GameRecord
@@ -180,10 +188,24 @@ export class Room {
     catch { this.onNotice('Could not change visibility. Check your connection.') }
   }
 
+  private gamePath(levelId: LevelId) { return levelId === firstLevel ? 'game' : `games/${levelId}` }
+
+  async selectLevel(levelId: LevelId) {
+    try {
+      if (levelId !== firstLevel) {
+        await runTransaction(this.at(this.gamePath(levelId)), current =>
+          current === null ? { state: initialState(levelId), history: [] } satisfies GameRecord : undefined,
+          { applyLocally: false },
+        )
+      }
+      await set(this.at('activeLevel'), levelId)
+    } catch { this.onNotice('Could not open that level. Check your connection.') }
+  }
+
   async requestRestart() {
     try {
       const result = await runTransaction(this.at('restart'), current =>
-        !current?.from ? { from: this.role, response: '' } : undefined,
+        !current?.from ? { from: this.role, response: '', levelId: this.activeLevel } : undefined,
       )
       if (!result.committed) this.onNotice('A restart request is already waiting.')
     } catch { this.onNotice('Could not request a restart.') }
@@ -199,14 +221,14 @@ export class Room {
     } catch { this.onNotice('Could not answer the restart request.') }
   }
 
-  private async finishRestart(response: 'yes' | 'no') {
+  private async finishRestart(response: 'yes' | 'no', levelId: LevelId) {
     this.finishingRestart = true
     try {
       if (response === 'yes') {
-        await runTransaction(this.at('game'), current => {
+        await runTransaction(this.at(this.gamePath(levelId)), current => {
           if (!current) return undefined
-          const record = gameRecord(current as GameRecord)
-          return { state: { ...initialState(), revision: record.state.revision + 1 }, history: [] } satisfies GameRecord
+          const record = gameRecord(current as GameRecord, levelId)
+          return { state: { ...initialState(levelId), revision: record.state.revision + 1 }, history: [] } satisfies GameRecord
         }, { applyLocally: false })
       } else this.onNotice('Your friend kept the current game.')
       await set(this.at('restart'), { from: '', response: '' })
