@@ -105,7 +105,7 @@ export class Room {
       const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
       if (beforeClaim.seats?.[friend] === this.uid) throw new Error('This browser already owns the other station. Choose that name or use the other phone.')
       const seat = await runTransaction(this.at(`seats/${this.role}`), current =>
-        current === null || current === '' || current === this.uid ? this.uid : undefined,
+        current === null || current === '' || current === this.uid || beforeClaim.online?.[this.role] === false ? this.uid : undefined,
       )
       if (!seat.committed || seat.snapshot.val() !== this.uid) throw new Error(`${this.role === 'devansh' ? 'Devansh' : 'Riddsss'} is already selected on another phone.`)
       if (this.closed) {
@@ -126,6 +126,7 @@ export class Room {
   private async markOnline() {
     try {
       const onlineRef = this.at(`online/${this.role}`)
+      await onDisconnect(this.at(`seats/${this.role}`)).set('')
       await onDisconnect(onlineRef).set(false)
       await set(onlineRef, true)
     } catch { this.onStatus(false, 'Could not mark this phone online. Check Firebase rules.') }
@@ -150,7 +151,8 @@ export class Room {
 
   private updateStatus() {
     const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
-    if (!this.networkOnline) this.onStatus(false, 'Reconnecting to the room…')
+    if (this.latest?.seats?.[this.role] !== this.uid) this.onStatus(false, 'This station is open on another browser. Choose the other player or close that session.')
+    else if (!this.networkOnline) this.onStatus(false, 'Reconnecting to the room…')
     else if (!this.latest?.online?.[friend]) this.onStatus(false, `Waiting for ${friend === 'devansh' ? 'Devansh' : 'Riddsss'}…`)
     else this.onStatus(true, 'Connected')
   }
@@ -238,6 +240,7 @@ export class Room {
 
   async leave() {
     try {
+      await onDisconnect(this.at(`seats/${this.role}`)).cancel()
       await onDisconnect(this.at(`online/${this.role}`)).cancel()
       await set(this.at(`online/${this.role}`), false)
       await runTransaction(this.at(`seats/${this.role}`), current => current === this.uid ? '' : undefined)

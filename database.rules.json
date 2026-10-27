@@ -4,14 +4,14 @@
     ".write": false,
     "rooms": {
       "$code": {
-        ".read": "$code === '112211' && auth !== null && (!data.exists() || data.child('seats/devansh').val() === auth.uid || data.child('seats/ridhima').val() === auth.uid || data.child('seats/devansh').val() === '' || data.child('seats/ridhima').val() === '')",
+        ".read": "$code === '112211' && auth !== null && (!data.exists() || data.child('seats/devansh').val() === auth.uid || data.child('seats/ridhima').val() === auth.uid || data.child('seats/devansh').val() === '' || data.child('seats/ridhima').val() === '' || data.child('online/devansh').val() === false || data.child('online/ridhima').val() === false)",
         ".write": "$code === '112211' && auth !== null && !data.exists() && newData.child('schemaVersion').val() === 1 && newData.child('seats/devansh').val() === '' && newData.child('seats/ridhima').val() === ''",
         "seats": {
           "devansh": {
-            ".write": "auth !== null && ((data.val() === '' && newData.val() === auth.uid && root.child('rooms/112211/seats/ridhima').val() !== auth.uid) || (data.val() === auth.uid && (newData.val() === auth.uid || newData.val() === '')))"
+            ".write": "auth !== null && (((data.val() === '' || root.child('rooms/112211/online/devansh').val() === false) && newData.val() === auth.uid && root.child('rooms/112211/seats/ridhima').val() !== auth.uid) || (data.val() === auth.uid && (newData.val() === auth.uid || newData.val() === '')))"
           },
           "ridhima": {
-            ".write": "auth !== null && ((data.val() === '' && newData.val() === auth.uid && root.child('rooms/112211/seats/devansh').val() !== auth.uid) || (data.val() === auth.uid && (newData.val() === auth.uid || newData.val() === '')))"
+            ".write": "auth !== null && (((data.val() === '' || root.child('rooms/112211/online/ridhima').val() === false) && newData.val() === auth.uid && root.child('rooms/112211/seats/devansh').val() !== auth.uid) || (data.val() === auth.uid && (newData.val() === auth.uid || newData.val() === '')))"
           }
         },
         "online": {

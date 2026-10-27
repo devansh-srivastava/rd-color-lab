@@ -243,6 +243,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
   const [thinking, setThinking] = useState(false);
   const [showLevels, setShowLevels] = useState(true);
   const [roomReady, setRoomReady] = useState(false);
+  const [requestedLevel, setRequestedLevel] = useState<LevelId | null>(null);
   const room = useRef<Room | null>(null);
   const worker = useRef<Worker | null>(null);
   const revision = useRef("");
@@ -278,6 +279,12 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
       room.current = null;
     };
   }, [role]);
+
+  useEffect(() => {
+    if (!roomReady || !requestedLevel) return;
+    if (requestedLevel !== snapshot.levelId) void room.current?.selectLevel(requestedLevel);
+    setRequestedLevel(null);
+  }, [roomReady, requestedLevel, snapshot.levelId]);
 
   useEffect(() => {
     const key = `${level.id}:${state.revision}`;
@@ -405,10 +412,9 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
             {levels.map((item, index) => <button
               key={item.id}
               type="button"
-              disabled={!roomReady}
               onClick={() => {
                 setShowLevels(false);
-                if (item.id !== snapshot.levelId) void room.current?.selectLevel(item.id as LevelId);
+                setRequestedLevel(item.id as LevelId);
               }}
               className={item.id === snapshot.levelId ? "active" : ""}
             >
@@ -417,8 +423,9 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
               <strong>↗</strong>
             </button>)}
           </div>
-          {!roomReady && <p className="level-help">Opening the room…</p>}
-          <button className="level-close" type="button" onClick={() => setShowLevels(false)} disabled={!roomReady}>Continue current level</button>
+          {!roomReady && <p className="level-help" role="status">{connectionText}</p>}
+          <button className="level-close" type="button" onClick={() => setShowLevels(false)}>Continue current level</button>
+          {!roomReady && <button className="level-close" type="button" onClick={() => { if (room.current) void room.current.leave().finally(onLeave); else onLeave(); }}>Change player</button>}
         </div>
       </div>}
       <div className="game-wrap">
