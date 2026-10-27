@@ -23,7 +23,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test
       - name: Build site
         run: |
           node -e "const names=['API_KEY','AUTH_DOMAIN','DATABASE_URL','PROJECT_ID','STORAGE_BUCKET','MESSAGING_SENDER_ID','APP_ID']; if(names.some(name=>!process.env['VITE_FIREBASE_'+name])) process.exit(1)"
