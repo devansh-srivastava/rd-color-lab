@@ -70,10 +70,14 @@ export class Room {
   private latest: RoomData | null = null
   private networkOnline = false
   private unsubscribers: Unsubscribe[] = []
+  private gameUnsubscribe: Unsubscribe | null = null
+  private watchedLevel: LevelId | null = null
+  private gameReady = false
   private closed = false
   private prompted = false
   private finishingRestart = false
   private activeLevel: LevelId = firstLevel
+  private wasOnline = false
 
   constructor(
     readonly role: Player,
@@ -120,7 +124,34 @@ export class Room {
         return
       }
       this.onStatus(false, 'Loading the level…', 'loading')
-      this.unsubscribers.push(onValue(roomRef, snapshot => this.receive(snapshot.val() as RoomData | null), () => this.onStatus(false, 'Room access was denied. Check Firebase rules.', 'error')))
+      this.latest = { ...beforeClaim, seats: { ...beforeClaim.seats, [this.role]: this.uid } }
+      this.watchGame(getLevel(beforeClaim.activeLevel ?? firstLevel).id)
+      const denied = () => this.onStatus(false, 'Room access was denied. Check Firebase rules.', 'error')
+      this.unsubscribers.push(onValue(this.at('seats'), snapshot => {
+        if (!this.latest) return
+        this.latest.seats = snapshot.val() ?? { devansh: '', ridhima: '' }
+        this.updateStatus()
+      }, denied))
+      this.unsubscribers.push(onValue(this.at('online'), snapshot => {
+        if (!this.latest) return
+        this.latest.online = snapshot.val() ?? { devansh: false, ridhima: false }
+        this.updateStatus()
+      }, denied))
+      this.unsubscribers.push(onValue(this.at('revealed'), snapshot => {
+        if (!this.latest) return
+        this.latest.revealed = snapshot.val() ?? { devansh: false, ridhima: false }
+        if (this.gameReady) this.receive(this.latest)
+      }, denied))
+      this.unsubscribers.push(onValue(this.at('restart'), snapshot => {
+        if (!this.latest) return
+        this.latest.restart = snapshot.val() ?? { from: '', response: '' }
+        if (this.gameReady) this.receive(this.latest)
+      }, denied))
+      this.unsubscribers.push(onValue(this.at('activeLevel'), snapshot => {
+        if (!this.latest) return
+        this.latest.activeLevel = getLevel(snapshot.val() ?? firstLevel).id
+        this.watchGame(this.latest.activeLevel)
+      }, denied))
       this.unsubscribers.push(onValue(ref(this.db, '.info/connected'), snapshot => {
         this.networkOnline = snapshot.val() === true
         if (this.networkOnline && !this.closed) void this.markOnline()
@@ -133,6 +164,14 @@ export class Room {
 
   private async markOnline() {
     try {
+      const reconnecting = this.wasOnline
+      this.wasOnline = true
+      if (reconnecting) {
+        const seat = await runTransaction(this.at(`seats/${this.role}`), current =>
+          current === null || current === '' || current === this.uid ? this.uid : undefined,
+        )
+        if (!seat.committed || seat.snapshot.val() !== this.uid) throw new Error('Seat taken')
+      }
       const onlineRef = this.at(`online/${this.role}`)
       await Promise.all([
         onDisconnect(this.at(`seats/${this.role}`)).set(''),
@@ -140,6 +179,21 @@ export class Room {
       ])
       await set(onlineRef, true)
     } catch { this.onStatus(false, 'Could not mark this phone online. Check Firebase rules.', 'error') }
+  }
+
+  private watchGame(levelId: LevelId) {
+    if (this.watchedLevel === levelId || this.closed) return
+    this.gameUnsubscribe?.()
+    this.watchedLevel = levelId
+    this.gameReady = false
+    this.gameUnsubscribe = onValue(this.at(this.gamePath(levelId)), snapshot => {
+      if (!this.latest || this.closed || this.watchedLevel !== levelId) return
+      const value = snapshot.val() as GameRecord | null
+      if (levelId === firstLevel) this.latest.game = value ?? { state: initialState(), history: [] }
+      else this.latest.games = { ...this.latest.games, [levelId]: value ?? { state: initialState(levelId), history: [] } }
+      this.gameReady = true
+      this.receive(this.latest)
+    }, () => this.onStatus(false, 'Could not load the level. Check Firebase rules.', 'error'))
   }
 
   private receive(value: RoomData | null) {
@@ -177,7 +231,7 @@ export class Room {
         const move = applyMove(record.state, this.role, from, to)
         if (!move.ok) return undefined
         return { state: move.state, history: [...record.history, record.state].slice(-50) } satisfies GameRecord
-      }, { applyLocally: false })
+      })
       if (!result.committed) this.onNotice('That pour is no longer available. Try again.')
     } catch { this.onNotice('Could not save the pour. Check your connection.') }
   }
@@ -191,7 +245,7 @@ export class Room {
         const previous = record.history.at(-1)
         if (!previous || record.state.lastMove?.actor !== this.role) return undefined
         return { state: { ...previous, revision: record.state.revision + 1, lastMove: null }, history: record.history.slice(0, -1) } satisfies GameRecord
-      }, { applyLocally: false })
+      })
       if (!result.committed) this.onNotice('Only the player who made the last pour can undo it.')
     } catch { this.onNotice('Could not undo. Check your connection.') }
   }
@@ -263,6 +317,8 @@ export class Room {
 
   close() {
     this.closed = true
+    this.gameUnsubscribe?.()
+    this.gameUnsubscribe = null
     this.unsubscribers.forEach(unsubscribe => unsubscribe())
     this.unsubscribers = []
   }
