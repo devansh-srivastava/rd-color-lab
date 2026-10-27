@@ -398,8 +398,8 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
   }
 
   function leaveRoom() {
-    if (room.current) void room.current.leave();
-    onLeave();
+    if (room.current) void room.current.leave().finally(onLeave);
+    else onLeave();
   }
 
   const renderTube = (tube: TubeData) => (
