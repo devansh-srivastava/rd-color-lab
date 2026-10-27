@@ -11,7 +11,7 @@ import {
   type Tube as TubeData,
 } from "./game";
 import { isMuted, playCue, startAudio, toggleMute } from "./audio";
-import { Room, ROOM_CODE, type RoomSnapshot } from "./room";
+import { Room, ROOM_CODE, type ConnectionKind, type RoomSnapshot } from "./room";
 
 const names: Record<Player, string> = {
   devansh: "Devansh",
@@ -181,10 +181,11 @@ function Entry({ onEnter }: { onEnter: () => void }) {
   );
 }
 
-function SeatPicker({ onChoose }: { onChoose: (role: Player) => void }) {
+function SeatPicker({ onChoose, onBack }: { onChoose: (role: Player) => void; onBack: () => void }) {
   return (
     <main className="entry-shell">
       <div className="entry-card">
+        <button className="entry-back" type="button" onClick={onBack}>← Back to code</button>
         <Brand />
         <p className="eyebrow">ROOM {ROOM_CODE}</p>
         <h1>
@@ -228,7 +229,9 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
     revealed: { devansh: false, ridhima: false },
   });
   const [connected, setConnected] = useState(false);
-  const [connectionText, setConnectionText] = useState("Connecting…");
+  const [connectionText, setConnectionText] = useState("Signing in…");
+  const [connectionKind, setConnectionKind] = useState<ConnectionKind>("loading");
+  const [slowJoin, setSlowJoin] = useState(false);
   const [message, setMessage] = useState(
     "Tap one of your tubes, then tap your station or the shared tube.",
   );
@@ -259,9 +262,10 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
     const session = new Room(
       role,
       (next) => { setSnapshot(next); setRoomReady(true); },
-      (ready, text) => {
+      (ready, text, kind) => {
         setConnected(ready);
         setConnectionText(text);
+        setConnectionKind(kind);
       },
       setMessage,
       (levelId) => {
@@ -279,6 +283,12 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
       room.current = null;
     };
   }, [role]);
+
+  useEffect(() => {
+    if (roomReady) { setSlowJoin(false); return; }
+    const timeout = window.setTimeout(() => setSlowJoin(true), 12000);
+    return () => window.clearTimeout(timeout);
+  }, [roomReady]);
 
   useEffect(() => {
     if (!roomReady || !requestedLevel) return;
@@ -387,6 +397,11 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
     nextWorker.postMessage(state);
   }
 
+  function leaveRoom() {
+    if (room.current) void room.current.leave();
+    onLeave();
+  }
+
   const renderTube = (tube: TubeData) => (
     <Tube
       key={tube.id}
@@ -405,6 +420,7 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
     <main className="game-shell">
       {showLevels && <div className="level-overlay" role="dialog" aria-modal="true" aria-label="Choose a level">
         <div className="level-card">
+          <button className="entry-back" type="button" onClick={leaveRoom}>← Back to players</button>
           <p className="eyebrow">ROOM {ROOM_CODE} · CHOOSE TOGETHER</p>
           <h2>Pick a <em>level.</em></h2>
           <p className="level-help">Either player can open a level. Your progress in each one is saved for this room.</p>
@@ -423,16 +439,19 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
               <strong>↗</strong>
             </button>)}
           </div>
-          {!roomReady && <p className="level-help" role="status">{connectionText}</p>}
+          {!connected && <div className={`level-wait${connectionKind === "error" ? " error" : ""}`} role="status">
+            <span>{connectionText}</span>
+            {connectionKind === "loading" && <div className="loading-track" role="progressbar" aria-label="Joining the room"><span /></div>}
+            {slowJoin && connectionKind === "loading" && <small>This is taking longer than usual. Check your internet connection.</small>}
+          </div>}
           <button className="level-close" type="button" onClick={() => setShowLevels(false)}>Continue current level</button>
-          {!roomReady && <button className="level-close" type="button" onClick={() => { if (room.current) void room.current.leave().finally(onLeave); else onLeave(); }}>Change player</button>}
         </div>
       </div>}
       <div className="game-wrap">
         <header className="topbar">
+          <button className="top-back" type="button" onClick={() => setShowLevels(true)} aria-label="Back to levels">← <span>Levels</span></button>
           <Brand />
           <div className="top-actions">
-            <button className="level-open" type="button" onClick={() => setShowLevels(true)}>LEVELS</button>
             <span className={`level-pill${connected ? " online" : ""}`}>
               <span /> {connected ? "CONNECTED" : "WAITING"}
             </span>
@@ -464,6 +483,13 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
             Pass paint through the middle.
           </p>
         </section>
+        {!connected && <div className={`waiting-banner${connectionKind === "error" ? " error" : ""}`} role="status">
+          <span className="waiting-dot" />
+          <span>{connectionText}{slowJoin && connectionKind === "loading" ? " Check your internet connection if this continues." : ""}
+            {connectionKind === "loading" && <span className="loading-track" role="progressbar" aria-label="Joining the room"><span /></span>}
+          </span>
+          <button type="button" onClick={leaveRoom}>Disconnect</button>
+        </div>}
         <div className="board">
           <section className="station own" aria-label="Your station">
             <div className="station-heading">
@@ -573,8 +599,8 @@ function Game({ role, onLeave }: { role: Player; onLeave: () => void }) {
           <div className="room-label">
             <span>ROOM {ROOM_CODE}</span>
             <b>{names[role]}</b>
-            <button type="button" onClick={() => { if (room.current) void room.current.leave().finally(onLeave); else onLeave() }}>
-              Change player
+            <button type="button" onClick={leaveRoom}>
+              Disconnect
             </button>
           </div>
           <span className="move-count">
@@ -590,6 +616,6 @@ export default function App() {
   const [entered, setEntered] = useState(false);
   const [role, setRole] = useState<Player | null>(null);
   if (!entered) return <Entry onEnter={() => setEntered(true)} />;
-  if (!role) return <SeatPicker onChoose={setRole} />;
+  if (!role) return <SeatPicker onChoose={setRole} onBack={() => setEntered(false)} />;
   return <Game role={role} onLeave={() => setRole(null)} />;
 }

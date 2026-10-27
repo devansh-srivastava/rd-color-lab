@@ -7,6 +7,7 @@ export const ROOM_CODE = '112211'
 const base = `rooms/${ROOM_CODE}`
 
 export type RoomSnapshot = { levelId: LevelId; game: GameState; history: GameState[]; revealed: Record<Player, boolean> }
+export type ConnectionKind = 'loading' | 'waiting' | 'connected' | 'error'
 type GameRecord = { state: GameState; history: GameState[] }
 type RoomData = {
   schemaVersion: number
@@ -77,7 +78,7 @@ export class Room {
   constructor(
     readonly role: Player,
     private readonly onSnapshot: (snapshot: RoomSnapshot) => void,
-    private readonly onStatus: (connected: boolean, text: string) => void,
+    private readonly onStatus: (connected: boolean, text: string, kind: ConnectionKind) => void,
     private readonly onNotice: (text: string) => void,
     private readonly onRestartRequest: (levelId: LevelId) => void,
   ) {
@@ -91,6 +92,7 @@ export class Room {
 
   private async start() {
     try {
+      this.onStatus(false, 'Signing in…', 'loading')
       const app = initializeApp(config())
       const auth = getAuth(app)
       const db = getDatabase(app)
@@ -98,12 +100,17 @@ export class Room {
       this.uid = (auth.currentUser ?? (await signInAnonymously(auth)).user).uid
       if (this.closed) return
       this.db = db
+      this.onStatus(false, 'Opening the room…', 'loading')
       const roomRef = this.at()
-      await runTransaction(roomRef, current => current === null ? initialRoom() : undefined, { applyLocally: false })
-      const beforeClaim = (await get(roomRef)).val() as RoomData | null
+      let beforeClaim = (await get(roomRef)).val() as RoomData | null
+      if (!beforeClaim) {
+        const created = await runTransaction(roomRef, current => current === null ? initialRoom() : undefined, { applyLocally: false })
+        beforeClaim = created.snapshot.val() as RoomData | null
+      }
       if (!beforeClaim) throw new Error('Could not open the room. Check the database rules.')
       const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
       if (beforeClaim.seats?.[friend] === this.uid) throw new Error('This browser already owns the other station. Choose that name or use the other phone.')
+      this.onStatus(false, `Joining as ${this.role === 'devansh' ? 'Devansh' : 'Riddsss'}…`, 'loading')
       const seat = await runTransaction(this.at(`seats/${this.role}`), current =>
         current === null || current === '' || current === this.uid || beforeClaim.online?.[this.role] === false ? this.uid : undefined,
       )
@@ -112,24 +119,27 @@ export class Room {
         await runTransaction(this.at(`seats/${this.role}`), current => current === this.uid ? '' : undefined)
         return
       }
-      this.unsubscribers.push(onValue(roomRef, snapshot => this.receive(snapshot.val() as RoomData | null), () => this.onStatus(false, 'Room access was denied. Check Firebase rules.')))
+      this.onStatus(false, 'Loading the level…', 'loading')
+      this.unsubscribers.push(onValue(roomRef, snapshot => this.receive(snapshot.val() as RoomData | null), () => this.onStatus(false, 'Room access was denied. Check Firebase rules.', 'error')))
       this.unsubscribers.push(onValue(ref(this.db, '.info/connected'), snapshot => {
         this.networkOnline = snapshot.val() === true
         if (this.networkOnline && !this.closed) void this.markOnline()
         this.updateStatus()
       }))
     } catch (error) {
-      this.onStatus(false, error instanceof Error ? error.message : 'Could not join the room.')
+      this.onStatus(false, error instanceof Error ? error.message : 'Could not join the room.', 'error')
     }
   }
 
   private async markOnline() {
     try {
       const onlineRef = this.at(`online/${this.role}`)
-      await onDisconnect(this.at(`seats/${this.role}`)).set('')
-      await onDisconnect(onlineRef).set(false)
+      await Promise.all([
+        onDisconnect(this.at(`seats/${this.role}`)).set(''),
+        onDisconnect(onlineRef).set(false),
+      ])
       await set(onlineRef, true)
-    } catch { this.onStatus(false, 'Could not mark this phone online. Check Firebase rules.') }
+    } catch { this.onStatus(false, 'Could not mark this phone online. Check Firebase rules.', 'error') }
   }
 
   private receive(value: RoomData | null) {
@@ -151,10 +161,11 @@ export class Room {
 
   private updateStatus() {
     const friend = this.role === 'devansh' ? 'ridhima' : 'devansh'
-    if (this.latest?.seats?.[this.role] !== this.uid) this.onStatus(false, 'This station is open on another browser. Choose the other player or close that session.')
-    else if (!this.networkOnline) this.onStatus(false, 'Reconnecting to the room…')
-    else if (!this.latest?.online?.[friend]) this.onStatus(false, `Waiting for ${friend === 'devansh' ? 'Devansh' : 'Riddsss'}…`)
-    else this.onStatus(true, 'Connected')
+    if (this.latest && this.latest.seats?.[this.role] !== this.uid) this.onStatus(false, 'This station is open on another browser. Choose the other player or close that session.', 'error')
+    else if (!this.networkOnline) this.onStatus(false, 'Reconnecting to the room…', 'loading')
+    else if (!this.latest) this.onStatus(false, 'Joining the room…', 'loading')
+    else if (!this.latest?.online?.[friend]) this.onStatus(false, `Waiting for ${friend === 'devansh' ? 'Devansh' : 'Riddsss'} to join…`, 'waiting')
+    else this.onStatus(true, 'Connected', 'connected')
   }
 
   async move(from: string, to: string) {
@@ -240,10 +251,12 @@ export class Room {
 
   async leave() {
     try {
-      await onDisconnect(this.at(`seats/${this.role}`)).cancel()
-      await onDisconnect(this.at(`online/${this.role}`)).cancel()
       await set(this.at(`online/${this.role}`), false)
       await runTransaction(this.at(`seats/${this.role}`), current => current === this.uid ? '' : undefined)
+      await Promise.all([
+        onDisconnect(this.at(`seats/${this.role}`)).cancel(),
+        onDisconnect(this.at(`online/${this.role}`)).cancel(),
+      ])
     } catch { /* The same anonymous browser can still resume its seat. */ }
     this.close()
   }

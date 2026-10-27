@@ -52,6 +52,7 @@ button:focus-visible {
 }
 .topbar {
   justify-content: space-between;
+  gap: 10px;
   height: 52px;
   border-bottom: 1px solid #ffffff1d;
 }
@@ -92,6 +93,83 @@ button:focus-visible {
 }
 .top-actions {
   gap: 10px;
+}
+.top-back,
+.entry-back {
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  color: #efa2aa;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.top-back { flex: 0 0 auto; padding: 0 5px; }
+.entry-back { margin: -9px 0 13px -5px; padding: 0 5px; }
+.level-card .entry-back { margin: -12px 0 14px -5px; }
+.waiting-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  margin: 0 0 12px;
+  padding: 9px 13px;
+  border: 1px solid #f1d99966;
+  border-radius: 12px;
+  background: #f1d99914;
+  color: #f5e8c4;
+  font-size: 12px;
+}
+.waiting-banner > span:nth-child(2) { flex: 1; }
+.waiting-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #f1d999;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.waiting-banner button {
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+  color: #ffd4d7;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.level-wait {
+  margin: 14px 0 0;
+  padding: 11px 12px;
+  border: 1px solid #f1d99966;
+  border-radius: 10px;
+  background: #f1d99912;
+  color: #f5e8c4;
+  font-size: 12px;
+}
+.level-wait small { display: block; margin-top: 8px; color: #d3c8af; }
+.level-wait.error,
+.waiting-banner.error { border-color: #efa2aa77; background: #efa2aa12; color: #ffd4d7; }
+.loading-track {
+  display: block;
+  width: 100%;
+  height: 4px;
+  margin-top: 9px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #ffffff24;
+}
+.loading-track > span {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: #f1d999;
+  animation: loading-slide 1.35s ease-in-out infinite;
+}
+@keyframes loading-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(270%); }
 }
 .level-pill {
   border: 1px solid #ffffff24;
@@ -568,6 +646,12 @@ button:focus-visible {
   .bottom-line {
     margin-top: 7px;
   }
+}
+@media (max-width: 480px) {
+  .topbar .brand > span:last-child { display: none; }
+  .top-back { min-width: 44px; min-height: 44px; font-size: 21px; }
+  .top-back span { display: none; }
+  .waiting-banner { margin-bottom: 8px; }
 }
 @media (max-height: 760px) and (max-width: 700px) {
   .topbar {
